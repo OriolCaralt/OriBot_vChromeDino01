@@ -1,3 +1,10 @@
+/*
+ * First approach to develop an evolutive learning algorithm to play an easy version of Chrome's off-line game
+ * 
+ * by Oriol Caralt
+ * 
+ * */
+
 import java.awt.AWTException;
 import java.awt.Color;
 import java.awt.MouseInfo;
@@ -12,28 +19,25 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Scanner;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ThreadLocalRandom;
-import java.lang.StrictMath;
 
 public class ChromeDinoBot{
 
 	private Point dinoPosition, gameOverTextPosition, rightMarginOffset;
 	private Color dinoTextAndObstaclesColor = new Color(83, 83, 83);
-	private int dinoSize = 25 /*TODO ADJUST*/, obstacleSize, distance, obstaclesJumped, maxNumCreatures = 32 /*Minimum due to the evolution strategy is 30*/;
+	private int dinoSize = 25, obstacleSize, distance, obstaclesJumped, maxNumCreatures = 32;
 	private long pseudoSpeed;
 	private Robot robot;
 	private double generation[][];
 	private Rectangle captureRect;
 	private boolean isDataRealQ = false;
+	private int samplingRate = 50; // If modified the speed function may need to be updated too
 	
 	public static void main(String[] args) {
 		new ChromeDinoBot();
@@ -46,38 +50,37 @@ public class ChromeDinoBot{
 			e1.printStackTrace();
 		}   
 		
-		System.out.println("Let the game fail and hold that screen, then put the mouse on the Dino's body at the arm high and press Enter/Intro while the focus is on the cmd");
+		System.out.println("Let the game fail and hold that screen, then change the focus to the cmd, put the mouse on the midle of Dino's body at the arm height and press Enter/Intro");
 		Scanner keyboard = new Scanner(System.in);
-		keyboard.nextLine();
-		
+		keyboard.nextLine();		
 		dinoPosition = MouseInfo.getPointerInfo().getLocation();
 		
-		System.out.println("Put the mouse on the right edge of the game and press Enter/Intro");
+		System.out.println("Keep the focus on the cmd, put the mouse on the right edge of the game and press Enter/Intro");
 		keyboard.nextLine();
 		rightMarginOffset = MouseInfo.getPointerInfo().getLocation();		
 		
-		System.out.println("Put the mouse on the M of the Game Over text press Enter/Intro, then chage the focus to the browser");
+		System.out.println("Put the mouse on the 'M' of the 'Game Over' text(be sure the mouse is on a 'colored' pixel), press Enter/Intro, then chage the focus to the browser");
 		keyboard.nextLine();
 		keyboard.close();
 		gameOverTextPosition = MouseInfo.getPointerInfo().getLocation();
 		
  		generation = new double[maxNumCreatures][5];
  		
- 		captureRect = new Rectangle(dinoPosition.x+25, dinoPosition.y, rightMarginOffset.x-dinoPosition.x-25, 1); // TODO +25? Sure?
+ 		captureRect = new Rectangle(dinoPosition.x+(dinoSize/2), dinoPosition.y, rightMarginOffset.x-dinoPosition.x-(dinoSize/2), 1);
 		
-		obtainFirstGeneration();
-	
+		obtainFirstGeneration();	
 		startEvolving();
 	}
 	private void obtainFirstGeneration() {
 		// Read from file, if file is not there create form scratch	
  		if(!loadGenerationFromFile()){
  			System.out.println("Create a generation from scratch");
-			for(int i=0; i < maxNumCreatures; i++){
-				generation[i][0] = Math.random(); // speedWeight
-				generation[i][1] = Math.random(); // distanceWeight
-				generation[i][2] = Math.random(); // sizeWeight
-				generation[i][3] = Math.random(); // biasWeight, TODO Why do we need Bias? Also, could we use more features like distance/speed, (distance+size)/speed, etc.?
+			for(int i=0; i < maxNumCreatures; i++){ // Random weights from 0.5 to -0.5 for each feature
+				// We could use more features like distance/speed, (distance+size)/speed, etc. but so far...
+				generation[i][0] = Math.random()-0.5; // speedWeight
+				generation[i][1] = Math.random()-0.5; // distanceWeight
+				generation[i][2] = Math.random()-0.5; // sizeWeight
+				generation[i][3] = Math.random()-0.5; // biasWeight
 				generation[i][4] = 0; // Fitness = 0 to start
 			}		
  		}
@@ -90,29 +93,21 @@ public class ChromeDinoBot{
 		int creaturesRead = 0;
 
 		try {
-
 			br = new BufferedReader(new FileReader(csvFile));
 			while ((line = br.readLine()) != null){
 
-			        // use comma as separator
 				String[] creature = line.split(cvsSplitBy);
 				
 				generation[creaturesRead][0] = Double.parseDouble(creature[0]); // speedWeight
 				generation[creaturesRead][1] = Double.parseDouble(creature[1]); // distanceWeight
 				generation[creaturesRead][2] = Double.parseDouble(creature[2]); // sizeWeight
 				generation[creaturesRead][3] = Double.parseDouble(creature[3]); // biasWeight
-				generation[creaturesRead][4] = Double.parseDouble(creature[4]); // Fitness // Dosen't matter anyway, we will test again
-				
-				creaturesRead++;
+				generation[creaturesRead++][4] = Double.parseDouble(creature[4]); // Fitness,  the value dosen't matter, we will test it again anyway
 			}
 			
-			for(; creaturesRead < maxNumCreatures; creaturesRead++){
-				generation[creaturesRead][0] = Math.random(); // speedWeight
-				generation[creaturesRead][1] = Math.random(); // distanceWeight
-				generation[creaturesRead][2] = Math.random(); // sizeWeight
-				generation[creaturesRead][3] = Math.random(); // biasWeight
-				generation[creaturesRead][4] = 0; // Fitness = 0 to start
-			}
+			if(creaturesRead < maxNumCreatures)
+				return false;
+		
 		} catch (FileNotFoundException e) {
 			return false;
 		} catch (IOException e) {
@@ -130,39 +125,32 @@ public class ChromeDinoBot{
 		return true;
 	}
 	private void startEvolving() {
-		// Test current generation, once tested apply "evolution" to obtain a new generation, save it on a file and start all over		
+		// Test current generation, once tested evolve it to obtain a new generation, save it on a file and start all over		
 		int generationIndex = 1;
 		while(true)
-		{	
+		{
+			int creatureIndex = 0;
 			System.out.println("Generation:" + generationIndex++);
-			for(int creatureIndex = 0; creatureIndex < maxNumCreatures; creatureIndex++)
+			for(; creatureIndex < maxNumCreatures; creatureIndex++)
 			{
 				testCreature(creatureIndex);
-				System.out.print(generation[creatureIndex][4] + ",");
+				System.out.print(((Double)generation[creatureIndex][4]).intValue() + ",");
 			}
 			System.out.println();
-			evolve();
 			saveGeneration();
+			evolve();			
 		}		
 	}
 	private void saveGeneration() {
 		try{			
 			FileWriter writer = new FileWriter("./" + System.currentTimeMillis() + "_Generation.csv");          
 	        for(int creatureIndex = 0; creatureIndex < maxNumCreatures; creatureIndex++){
-	        	writer.append(String.valueOf(generation[creatureIndex][0]));
-	        	writer.append(',');
-	        	writer.append(String.valueOf(generation[creatureIndex][1]));
-	        	writer.append(',');
-	        	writer.append(String.valueOf(generation[creatureIndex][2]));
-	        	writer.append(',');
-	        	writer.append(String.valueOf(generation[creatureIndex][3]));
-	        	writer.append(',');
-	        	writer.append(String.valueOf(generation[creatureIndex][4]));
-	            
+	        	for(int featureIndex = 0; featureIndex < 5; featureIndex++)
+		        	writer.append(String.valueOf(generation[creatureIndex][featureIndex]) + ',');
+
 	        	writer.append('\n');
 	            writer.flush();
 	        }
-	        
 	        writer.close();
 	    }        
 	    catch(Exception e){
@@ -170,72 +158,72 @@ public class ChromeDinoBot{
 	    }
 	}
 	private void evolve() {
-		List<Integer> bestCreaturesIndex = obtainBestCreatures(); // Min 2 Max 8
+		List<Integer> bestCreaturesIndex = obtainBestCreatures();
 		double newGeneration[][] = new double[maxNumCreatures][5];
-			
-		// Add the best creatures unmodified to the new generation (2-8)
-		// Add the best creatures with 100% random mutations to the new generation (2-8)
+		
+		System.out.print("B:");
+		for(int i =0; i<bestCreaturesIndex.size();i++)
+			System.out.print(bestCreaturesIndex.get(i) + ",");
+		System.out.println();
+		
+		// Clone + mutation clone
+		// Add the best creatures unmodified to the new generation and add the best creatures with 100% random mutations to the new generation
 		for(int creatureIndex = 0; creatureIndex < bestCreaturesIndex.size(); creatureIndex++)
 			for(int featureIndex = 0; featureIndex < 4; featureIndex++){
 				newGeneration[creatureIndex][featureIndex] = generation[bestCreaturesIndex.get(creatureIndex)][featureIndex];
-				newGeneration[bestCreaturesIndex.size() + creatureIndex][featureIndex] = Math.random() + generation[bestCreaturesIndex.get(creatureIndex)][featureIndex];
+				newGeneration[bestCreaturesIndex.size() + creatureIndex][featureIndex] = (Math.random()-0.5) + generation[bestCreaturesIndex.get(creatureIndex)][featureIndex];
 			}
 		
-		// Add a full cross over between the best 2 creatures. 2 creatures with 4 genomes each => 16 creatures (but we already have the originals so total 14 new)
+		// Full cross over with random mutations
+		// Add a full cross over between the best 2 creatures. So 2 creatures with 4 genes each => 16 creatures (but we already have the originals so total 14 new)
 		for(int i = 1; i <= 14; i++)
 			for(int featuresIndex = 0; featuresIndex < 4; featuresIndex++)
-				newGeneration[(bestCreaturesIndex.size()*2)+i-1][featuresIndex] = generation[bestCreaturesIndex.get((i&(byte)Math.pow(2, featuresIndex))==0?0:1)][featuresIndex];
+				newGeneration[(bestCreaturesIndex.size()*2)+i-1][featuresIndex] = 
+					(Math.random()>0.5?0:Math.random()-0.5) + generation[bestCreaturesIndex.get((i&(byte)Math.pow(2, featuresIndex))==0?0:1)][featuresIndex];
 		
-		// Complete until maxNumCreatures with 100% random cross over of the best creatures plus randomness (maxNumCreatures minus 18-30)
+		// Random cross over with mutations
+		// Complete until maxNumCreatures with random cross over of the genes the best creatures plus mutations
 		for(int creatureIndex = (bestCreaturesIndex.size()*2)+14; creatureIndex < maxNumCreatures; creatureIndex++)
 			for(int featureIndex = 0; featureIndex < 4; featureIndex++)
-				newGeneration[creatureIndex][featureIndex] = Math.random() + generation[ThreadLocalRandom.current().nextInt(0,bestCreaturesIndex.size())][featureIndex];
+				newGeneration[creatureIndex][featureIndex] = (Math.random()-0.5) + generation[ThreadLocalRandom.current().nextInt(0,bestCreaturesIndex.size())][featureIndex];
 		
 		generation = newGeneration;
 	}
 	private List<Integer> obtainBestCreatures() {	
 		Map<Integer, Integer> generationsMap = new TreeMap<Integer, Integer>();
-		int fitnessSum = 0;
-		double fitnessMedian;
-		List<Integer> bestCreatures = new ArrayList<Integer>(); // List of the best (highest fitness) creatures of the generation
+		int bestFitness = 0;
+		List<Integer> bestCreatures = new ArrayList<Integer>(); // Indexes list of the best (highest fitness) creatures of the generation
 		
 		// First we order the creatures by the inverse of fitness (-fitness) while adding the values to calculate the median(?)
 		for(int i=0; i < maxNumCreatures; i++){
-			generationsMap.put(Integer.valueOf((Double.valueOf(-generation[i][4])).intValue()), i); // TODO cal fer tot aixo???		
-			fitnessSum += generation[i][4];
+			generationsMap.put(Integer.valueOf((Double.valueOf(-generation[i][4])).intValue()), i);// We use -fitness to order since the order function is "smallest to largest"
+			bestFitness = (bestFitness<generation[i][4])?Integer.valueOf((Double.valueOf(generation[i][4])).intValue()):bestFitness;
 		}
-		
-		fitnessMedian = fitnessSum/maxNumCreatures; // Calculating the median
-		
-		// Obtaining the "best" creatures. Min 2, max 8
-		Set set = generationsMap.entrySet();
-		Iterator iterator = set.iterator();
+						
+		Iterator<Entry<Integer, Integer>> iterator = generationsMap.entrySet().iterator();
 		
 		int creaturesUsed = 0;
 		boolean thresholdReached = false;
 		
-		//System.out.println(iterator.hasNext());
-		
-	     while(iterator.hasNext() && creaturesUsed <= 8 && !thresholdReached){
-	         Entry<Integer, Integer> mentry = (Entry<Integer, Integer>) iterator.next(); // TODO esto no me mola...
+		// Obtaining the best creatures. We add at least 2 creatures and max 8, the top ones above the threshold (66% of the best, we can play with it: Q3, 75%, only the best 2...)
+		while(iterator.hasNext() && creaturesUsed < 8 && !thresholdReached){
+	         Entry<Integer, Integer> mentry = (Entry<Integer, Integer>) iterator.next();
 	         
 	         if(creaturesUsed < 2)
 	        	 bestCreatures.add(mentry.getValue());
-	         else
-	         {
-	        	 if(-mentry.getKey() > fitnessMedian)// Remember we used the inverse of fitness to order
-	        		 bestCreatures.add(mentry.getValue());
+	         else{
+	        	 if(-mentry.getKey() > bestFitness*0.66) // (Remember we used -fitness to order so we need to negate again to compare)       		 
+	        		 bestCreatures.add(mentry.getValue());	        		
 	        	 else
 	        		 thresholdReached = true;
-	         }
-	         
+	         }	         
 	         creaturesUsed++;
 	      }		
 	     return bestCreatures;
 	}
 	private void testCreature(int creatureIndex) {
 
-		// The fist thing we do is pressing 'space', assuming the game is stopped since the last creature failed, until the "Game Over" text goes off
+		// The fist thing we do is pressing 'space', assuming the game is stopped due to the last creature failed, until the "Game Over" text disappears
 		while(robot.getPixelColor(gameOverTextPosition.x, gameOverTextPosition.y).equals(dinoTextAndObstaclesColor))
 		{
 			robot.keyPress(KeyEvent.VK_SPACE);
@@ -247,103 +235,91 @@ public class ChromeDinoBot{
 		obstaclesJumped = 0;		
 		pseudoSpeed = 0;
 		
+		// Start checking the inputs
 		Thread updateInputsAndFitnessThread = new Thread() {
 			public void run() {
 				asyncUpdateInputsAndJumps();
 			}
-		};
-		
+		};		
 		updateInputsAndFitnessThread.start();
 		
 		// While the "Game Over" text is not in place we keep testing the current Creature
-		while(!robot.getPixelColor(gameOverTextPosition.x, gameOverTextPosition.y).equals(dinoTextAndObstaclesColor)) // TODO create a thread to check this?
+		while(!robot.getPixelColor(gameOverTextPosition.x, gameOverTextPosition.y).equals(dinoTextAndObstaclesColor))
 		{			
-			// If data is real and we are not on the air... TODO
+			// If data is "real" we calculate the output. Idea for next version: we don't need to calculate if we are on the air
 			if(isDataRealQ){
-				// Using the inputs we calculate the output 
-				if(((pseudoSpeed * generation[creatureIndex][0] + 
-						distance * generation[creatureIndex][1] + 
-						obstacleSize * generation[creatureIndex][2] + 
-						generation[creatureIndex][3])) < 50) // Perceptron ?? TODO!!! TODO Maybe we should "normalize" the inputs...(?)
-				{
-					//System.out.print(" A: Jump!");
-					robot.keyPress(KeyEvent.VK_SPACE);
-					// TODO, if we jump we should let some time until we check again since we are on the air
-				}	/*
-				else
-					System.out.print(" A: NO Jump!");
-				/*
-				System.out.print(" D: " + distance);		
-				System.out.print(" S: " + pseudoSpeed);
-				System.out.print(" W: " + obstacleSize);
+						
+				
+				double maxDistance = rightMarginOffset.x-dinoPosition.x-(dinoSize/2)-100, minDistance = 0; // Values taken to match the distance "sensor" margin
+				double maxPseudoSpeed = 48, minPseudoSpeed = 24; // Values checked by sampling, update if needed
+				double maxObstacleSize = 100, minObstacleSize = 34; // Values checked by sampling, update if needed
+				
+				// Normalizing inputs:				
+				//+1 to -1
+				double normDistance = (distance - (maxDistance + minDistance)/2)/(maxDistance - (maxDistance + minDistance)/2);
+				//+1 to -1
+				double normPseudoSpeed = (pseudoSpeed - (maxPseudoSpeed + minPseudoSpeed)/2)/(maxPseudoSpeed - (maxPseudoSpeed + minPseudoSpeed)/2);
+				//+1 to -1
+				double normObstacleSize = (obstacleSize - (maxObstacleSize + minObstacleSize)/2)/(maxObstacleSize - (maxObstacleSize + minObstacleSize)/2);
+
+				double output = Math.tanh(((normPseudoSpeed * generation[creatureIndex][0] + 
+						normDistance * generation[creatureIndex][1] + 
+						normObstacleSize * generation[creatureIndex][2] + 
+						generation[creatureIndex][3]))); // Perceptron using Hyperbolic tangent
+								
+				if( output> 0) 
+					robot.keyPress(KeyEvent.VK_SPACE);		
+				
+				/* // Remove the initial '/' to comment the section.
+				System.out.print(" D: " + normDistance + "(" + distance + ")");		
+				System.out.print(" S: " + normPseudoSpeed + "(" + pseudoSpeed + ")");
+				System.out.print(" W: " + normObstacleSize + "(" + obstacleSize + ")");
+				System.out.print(" O:" + output);
 				System.out.println(" J: " + obstaclesJumped);
-				*/
+				//*/
 			}
 			
 			// Some delay
 			try {
-				Thread.sleep(50); // TODO ADJUST if needed
+				Thread.sleep(samplingRate);
 			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}			
 		}
 		
 		generation[creatureIndex][4] = obstaclesJumped; // Updating fitness		
-		updateInputsAndFitnessThread.stop(); // Stopping checking's TODO sort the deprecated situation
+		updateInputsAndFitnessThread.stop();
 	}
 	void asyncUpdateInputsAndJumps() {
-		
-		BufferedImage image;
-		
+
 		while(true){			
-			image = robot.createScreenCapture(captureRect);		
 			
-			int localDistance = 0;
-			Color col= new Color(image.getRGB(localDistance, 0), true);
+			// To do the calculations we read an image of 1 pixel height from the Dino's position to the right edge, at the Dino's arm height 
+			BufferedImage image = robot.createScreenCapture(captureRect);		
 			
-			// DISTANCE to first obstacle form the left
-			while(localDistance < image.getWidth()&& !col.equals(dinoTextAndObstaclesColor)){
-				col= new Color(image.getRGB(localDistance, 0), true);
-				localDistance++;
-			}
+			int currentDistance = 0;
+			
+			// Distance to the first obstacle form the left: if we are between the margins and the current pixel does't have the right color, move to the right and check again
+			while(currentDistance < image.getWidth() && !dinoTextAndObstaclesColor.equals(new Color(image.getRGB(currentDistance++, 0), true))){/*sorry, in-line code*/}
 		
-			// To be sure we have "real" data we wait till the obstacle is full on screen to calculate speed, size and obstacles jumped
-			if(localDistance < 400 && localDistance > 10){// TODO ADJUST if needed
-			
-				// Count obstacles jumped
-				if(localDistance>distance){ // New obstacle
+			// To be sure we have "real" data we wait till the obstacle is full on screen and not "too close" to the Dino
+			if(currentDistance < image.getWidth()-100 && currentDistance > 0){// 100 is the max size of an obstacle
+				
+				if(currentDistance > distance) // If the obstacle detected is further than the last time we checked, we assume is a new obstacle
 					obstaclesJumped++;
-				}
-				else
-					pseudoSpeed = distance - localDistance; // Assuming every lap take similar time the key is the distance difference
-				
-				distance = localDistance;				
-				
-				// SIZE of the first form left obstacle 
-				//TODO, si es el mateix obstacle no cal recalcular, nomes reusar!!!
-				boolean doWeHaveWidthQ = false;
-				int counter = 0;
-				int displacement = 0;
-				while(localDistance + displacement < image.getWidth() && !doWeHaveWidthQ){
-					col= new Color(image.getRGB(localDistance + displacement, 0), true);
-					if(col.equals(dinoTextAndObstaclesColor))
-						counter = 0;
-					else
-						counter++;
-					if(counter >= dinoSize)
-						doWeHaveWidthQ = true;
-					else
-						displacement++;
-				}
+				else // Otherwise we use the difference between last distance calculated and current calculation to calculate the speed of the game
+					pseudoSpeed = distance - currentDistance; // Assuming every lap take similar time the key for speed is the distance difference so we use it as a pseudo-speed
+												
+				distance = currentDistance;		
+
+				int gapLength = 0;
+				int localObstacleSize = 0;
+				// Looking for a gap, of a dinoSize length, after the first "colored" pixel (distance), from the first "colored" pixel till the gap beginning that's the obstacle size
+				while(distance + localObstacleSize++ < image.getWidth() && gapLength < dinoSize)
+					gapLength = (dinoTextAndObstaclesColor.equals(new Color(image.getRGB(distance + localObstacleSize, 0), true)))?0:gapLength+1;
 			
-				obstacleSize = displacement;
-				/*
-				System.out.print(" D: " + distance);		
-				System.out.print(" S: " + pseudoSpeed);
-				System.out.print(" W: " + obstacleSize);
-				System.out.println(" J: " + obstaclesJumped);
-				*/
+				obstacleSize = localObstacleSize;
+		
 				isDataRealQ = true;
 			}
 			else
@@ -351,9 +327,8 @@ public class ChromeDinoBot{
 			
 			// Some delay
 			try {
-				Thread.sleep(50); // TODO adjust if needed, maybe a function over the speed
+				Thread.sleep(samplingRate);
 			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}	
 		}
